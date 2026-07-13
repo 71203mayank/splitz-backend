@@ -80,7 +80,7 @@ Create a `.env` file in the project root:
 
 ```env
 PORT=5000
-MONGO_URI=<your_mongodb_connection_string>
+MONGODB_URI=<your_mongodb_connection_string>
 ```
 
 ---
