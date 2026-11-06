@@ -2,7 +2,7 @@ import {Schema, model, InferSchemaType} from "mongoose";
 
 const ClaimSchema = new Schema(
   {
-    member_id: {
+    memberId: {
       type: String,
       required: true,
     },
@@ -20,7 +20,7 @@ const ClaimSchema = new Schema(
 
 const ItemSchema = new Schema(
     {
-        item_id: {
+        itemId: {
             type: String,
             required: true,
         },
@@ -30,19 +30,37 @@ const ItemSchema = new Schema(
             trim: true,
         },
         
+        createdBy: {
+            type: String,
+            required: true,
+        },
+
+        /**
+         * For quantity mode, claims should not exceed the count of the item.
+         * For shares mode, claims can be any number, but the total price will be divided among the claims.
+         */
+        mode: {
+            type: String,
+            enum: ["quantity", "shares"],
+            required: true,
+        },
         //Quantity entered by the admin
         count: {
             type: Number,
-            requred: true,
+            required: true,
             min: 1,
         },
 
         // Stored price in paise
-        // if Price = 25.50, stored price: 2250
+        // if Price = 25.50, stored price: 2250 paise
         price:{
             type: Number,
             required: true,
             min: 0,
+            validate: {
+                validator: Number.isSafeInteger,
+                message: "Amount must be a safe integer in paise",
+            }
         },
         
         claims:{
@@ -58,7 +76,7 @@ const ItemSchema = new Schema(
 const MemberSchema = new Schema(
 
     {
-        member_id: {
+        memberId: {
             type: String,
             required: true,
         },
@@ -76,18 +94,18 @@ const MemberSchema = new Schema(
 
 const RoomSchema = new Schema(
     {
-        room_id:{
+        roomId:{
             type: String,
             required: true,
             unique: true,
             index: true,
         },
-        room_name: {
+        roomName: {
             type: String,
             required: true,
             trim: true,
         },
-        admin_member_id:{
+        adminMemberId:{
             type: String,
             required: true,
         },
@@ -101,26 +119,27 @@ const RoomSchema = new Schema(
         },
 
         // to be divided equally among all of them
-        taxes:{
+        groupAdditionals:{
             // in paise
             type: Number,
             min: 0,
+            default: 0,
+            validate: {
+                validator: Number.isSafeInteger,
+                message: "Amount must be a safe integer in paise",
+            }
         },
 
-        // to be requred eually among all of them
-        discount:{
+        // to be required equally among all of them
+        groupDiscount:{
             // in paise
             type: Number,
             min: 0,
-        },
-        createdAt: {
-            type: Date,
-            default: Date.now,
-        },
-
-        updatedAt: {
-            type: Date,
-            default: Date.now,
+            default: 0,
+            validate: {
+                validator: Number.isSafeInteger,
+                message: "Amount must be a safe integer in paise",
+            }
         },
         expiresAt: {
             type: Date,
@@ -131,7 +150,8 @@ const RoomSchema = new Schema(
         },
     },
     {
-        _id: false,
+        timestamps: true,
+
     }
 );
 
