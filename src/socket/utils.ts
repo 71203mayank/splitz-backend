@@ -1,6 +1,7 @@
 import {z} from "zod";
 import type { Socket } from "socket.io";
 import { getPresence, type Presence } from "./store";
+import { AppError } from "../utils/AppError";
 
 
 type AckResult<T> = 
@@ -88,8 +89,18 @@ export function withSocketHandler<S extends z.ZodType, R>(
 
             ack({success: true, data: result});
         } catch(error){
-            // Add expected AppError handling here.
-            console.error("Socker handler failed", error);
+            if (error instanceof AppError) {
+                ack({
+                    success: false,
+                    error: {
+                        code: error.code,
+                        message: error.message,
+                    },
+                });
+                return;
+            }
+
+            console.error("Socket handler failed", error);
 
             ack({
                 success: false,

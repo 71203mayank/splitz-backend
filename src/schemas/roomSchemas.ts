@@ -12,8 +12,9 @@ export const createRoomSchema = z.object({
 export const roomJoinSchema = z.object({
     roomId: z.string().trim().min(1),
     memberId: z.string().trim().min(1),
-    userName: z.string().trim().min(1),
 })
+
+export const roomSyncSchema = z.strictObject({});
 
 export const itemAddSchema = z.object({
     name: z.string().trim().min(1),

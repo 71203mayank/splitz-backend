@@ -3,65 +3,147 @@ import {
     addPresence,
     removePresence,
     getPresence,
-    // getUsersInRoom
+    getUsersInRoom,
 } from "./store";
 
 import * as roomSchemas from "../schemas/roomSchemas";
 // import type * as RoomInputs from "../schemas/roomSchemas";
 import { withSocketHandler } from "./utils";
 import roomServices from "../services/roomServices";
+import { AppError } from "../utils/AppError";
 
 
 // TODO: May be we can take the business logic somewhere else.
 export const handleRoom = (socket: Socket, io: Server) => {
 
-    // 1. join room
+    let joinInProgress = false;
+
+    // Event to join the room
+    /**
+     * NOTE:
+     * Snapshots can overlap with incoming updates.
+        During join or sync, a client might receive an item update before receiving the snapshot acknowledgement.
+        Replacing its state with an older snapshot could erase that update.
+        Plan snapshot revisions and client buffering before connecting the frontend.
+     */
     socket.on("room:join",
         withSocketHandler({
             socket,
             schema: roomSchemas.roomJoinSchema,
             requirePresence: false,
             handler: async({data, presence}) => {
-                const {roomId, memberId, userName} = data;
-                // TODO
-                // if already present to the same room or a differnt room return the error
-                // throw error
-
-                socket.join(roomId);
-                addPresence({
-                    socketId: socket.id,
-                    userId: memberId,
-                    roomId: roomId,
-                    userName: userName
-                })
-                
-                /**
-                 * Broadcast to everyone in the room except the caller
-                 * that this userName has joined.
-                 */
-                socket.to(roomId).emit("room:join",{
-                    userId: memberId,
-                    userName: userName,
-                });
-
-                // for the caller's ack
-                return {
-                    userId: memberId,
-                    userName: userName,
+                if(presence){
+                    throw new AppError(
+                        "ALREADY_JOINED",
+                        "Leave your current room before joining again",
+                    );
                 }
-                
-            }
+
+                if(joinInProgress){
+                    throw new AppError(
+                        "JOIN_IN_PROGRESS",
+                        "A room join is already in progress",
+                    );
+                }
+
+                joinInProgress = true;
+
+                try {
+                    const {roomId, memberId} = data;
+
+                    const {member} = await roomServices.getRoomForMember({
+                        roomId,
+                        actorMemberId: memberId
+                    });
+
+                    if(!socket.connected){
+                        throw new AppError("DISCONNECTED", "Connection closed");
+                    }
+
+                    const isActive = getUsersInRoom(roomId).some(
+                        (entry) => entry.userId === memberId,
+                    );
+
+                    if(isActive) {
+                        throw new AppError(
+                            "MEMBER_ACTIVE",
+                            "This member has already joined the room",
+                        );
+                    }
+
+                    /**
+                     * Reserve immediatley. No await b/w checking
+                     * availability and adding presence.
+                     */
+                    addPresence({
+                        socketId: socket.id,
+                        roomId,
+                        userId: memberId,
+                        // @ts-ignore
+                        userName: member.name,
+                    });
+
+                    try{
+                        await socket.join(roomId);
+
+                        // Fetch the snapshot after subscribing to updates
+                        const {room} = await roomServices.getRoomForMember({
+                            roomId,
+                            actorMemberId: memberId,
+                        });
+
+                        if(!socket.connected){
+                            throw new AppError("DISCONNECTED", "Connection closed");
+                        }
+
+                        const activeMemberIds = getUsersInRoom(roomId).map((entry) => entry.userId);
+
+                        io.to(roomId).emit("presence:updated",{
+                            roomId,
+                            activeMemberIds,
+                        })
+
+                        // Wrapper sends this only to the caller via ack.
+                        return {
+                            room,
+                            memberId,
+                            activeMemberIds,
+                        };
+                    } catch (error) {
+                        removePresence(socket.id);
+                        await socket.leave(roomId);
+                        throw error;
+                    }
+
+                }finally {
+                    joinInProgress = false;
+                }
+            },
         })
     );
 
-    // room sync: NEED A DIFFERENT APPROACH.
-    socket.on("room:sync", async() => {
-        // get the latest snapshot of the room
-        // only send it back to the user requested for the room sync
-    })
+    // Event to sync the room
+    socket.on("room:sync",
+        withSocketHandler({
+            socket,
+            schema: roomSchemas.roomSyncSchema,
+            requirePresence: true,
+            handler: async ({presence}) => {
+                const {room} = await roomServices.getRoomForMember({
+                    roomId: presence.roomId,
+                    actorMemberId:presence.userId,
+                })
 
-    // updating a room => add/update/remove items, add/remove claims.
-    // add item
+                return {
+                    room,
+                    activeMemberIds: getUsersInRoom(presence.roomId)
+                        .map((entry) => entry.userId)
+                };
+            },
+        })
+    )
+
+    // Event to add item
     socket.on("item:add",
         withSocketHandler({
             socket,
@@ -74,14 +156,14 @@ export const handleRoom = (socket: Socket, io: Server) => {
                     actorMemberId: presence.userId,
                 })
 
-                io.to(presence.roomId).emit("item:add", item);
+                io.to(presence.roomId).emit("item:added", item);
 
                 return item;
             }
         })
     )
 
-    // update item
+    // Event to update item
     socket.on("item:update",
         withSocketHandler({
             socket,
@@ -94,14 +176,14 @@ export const handleRoom = (socket: Socket, io: Server) => {
                     actorMemberId: presence.userId,
                 })
 
-                io.to(presence.roomId).emit("item:update", change);
+                io.to(presence.roomId).emit("item:updated", change);
 
                 return change;
             }
         })
     )
 
-    // remove item
+    // Event to remove item
     socket.on("item:remove",
         withSocketHandler({
             socket,
@@ -114,7 +196,7 @@ export const handleRoom = (socket: Socket, io: Server) => {
                     actorMemberId: presence.userId,
                 })
 
-                io.to(presence.roomId).emit("item:remove", itemId);
+                io.to(presence.roomId).emit("item:removed", itemId);
 
                 return itemId;
             }
@@ -122,7 +204,7 @@ export const handleRoom = (socket: Socket, io: Server) => {
     )
 
 
-    // updated claim
+    // Event to update claim on any item
     socket.on("claim:update",
         withSocketHandler({
             socket,
@@ -142,7 +224,7 @@ export const handleRoom = (socket: Socket, io: Server) => {
         })
     )
 
-    // change group additions and discounts [only Admin]
+    // Event to change group additions and discounts [only Admin]
     socket.on("room:adjustments:update", withSocketHandler({
         socket,
         schema: roomSchemas.roomAdjustmentUpdateSchema,
@@ -154,25 +236,32 @@ export const handleRoom = (socket: Socket, io: Server) => {
                 actorMemberId: presence.userId
             })
 
-            io.to(presence.roomId).emit("room:adjustments:update", change);
+            io.to(presence.roomId).emit("room:adjustments:updated", change);
             
             return change;
         }
     }))
 
-    // leave room => disconnect
+    // Event to leave the room.
     socket.on("disconnect", () => {
         console.log("[SOCKET] disconnected: ", socket.id);
+        
         const presence = getPresence(socket.id);
         if(!presence) return;
 
+        const {roomId, userId, userName} = presence;
+
         removePresence(socket.id);
 
-        // broadcast to room that user left
-        io.to(presence.roomId).emit("presence:update", {
-            message: `${presence.userName} left`,
+        const activeMemberIds = getUsersInRoom(roomId)
+            .map((entry) => entry.userId);
 
-        });
+        io.to(roomId).emit("presence:updated", {
+            roomId,
+            activeMemberIds,
+            leftMemberId: userId,
+            message: `${userName} left`,
+        })
     })
 
 

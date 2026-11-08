@@ -29,6 +29,11 @@ type Adjustments = RoomInputs.RoomAdjustmentUpdateInput & {
     actorMemberId: string;
 }
 
+type RoomMember = {
+    roomId: string;
+    actorMemberId: string;
+}
+
 class RoomService {
     createRoom = async (roomData: RoomInputs.CreateRoomInput): Promise<CreateRoomResult> => {
         // Generate an unique id
@@ -106,6 +111,18 @@ class RoomService {
         // write to DB
 
         // return + error handling.
+    }
+
+    getRoomForMember = async(roomData : RoomMember) => {
+        // get the room from the DB
+
+        // Check if this memberId belogns to this room
+
+        // return + error handling
+        let room, member;
+        return {room, member};
+
+
     }
 }
 
